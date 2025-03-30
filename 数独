@@ -1,0 +1,222 @@
+附录1：问题的求解
+相关环境：MATLAB R2022a；通过整数规划求解数独谜题：基于求解器
+B = [1,2,2;
+    1,5,3;
+    1,8,4;
+    2,1,6;
+    2,9,3;
+    3,3,4;
+    3,7,5;
+    4,4,8;
+    4,6,6;
+    5,1,8;
+    5,5,1;
+    5,9,6;
+    6,4,7;
+    6,6,5;
+    7,3,7;
+    7,7,6;
+    8,1,4;
+    8,9,8;
+    9,2,3;
+    9,5,4;
+    9,8,2];
+
+drawSudoku(B);
+x = optimvar('x',9,9,9,'Type','integer','LowerBound',0,'UpperBound',1);
+sudpuzzle = optimproblem;
+mul = ones(1,1,9);
+mul = cumsum(mul,3);
+sudpuzzle.Objective = sum(sum(sum(x,1),2).*mul);
+sudpuzzle.Constraints.consx = sum(x,1) == 1;
+sudpuzzle.Constraints.consy = sum(x,2) == 1;
+sudpuzzle.Constraints.consz = sum(x,3) == 1;
+majorg = optimconstr(3,3,9);
+
+for u = 1:3
+    for v = 1:3
+        arr = x(3*(u-1)+1:3*(u-1)+3,3*(v-1)+1:3*(v-1)+3,:);
+        majorg(u,v,:) = sum(sum(arr,1),2) == ones(1,1,9);
+    end
+end
+sudpuzzle.Constraints.majorg = majorg;
+for u = 1:size(B,1)
+    x.LowerBound(B(u,1),B(u,2),B(u,3)) = 1;
+end
+sudsoln = solve(sudpuzzle)
+sudsoln.x = round(sudsoln.x);
+
+y = ones(size(sudsoln.x));
+for k = 2:9
+    y(:,:,k) = k; 
+end
+S = sudsoln.x.*y; 
+S = sum(S,3); 
+drawSudoku(S)
+type drawSudoku
+附录2：相关函数 
+数独显示
+function drawSudoku(B)
+figure;hold on;axis off;axis equal 
+rectangle('Position',[0 0 9 9],'LineWidth',3,'Clipping','off') 
+rectangle('Position',[3,0,3,9],'LineWidth',2) 
+rectangle('Position',[0,3,9,3],'LineWidth',2) 
+rectangle('Position',[0,1,9,1],'LineWidth',1) 
+rectangle('Position',[0,4,9,1],'LineWidth',1)
+rectangle('Position',[0,7,9,1],'LineWidth',1)
+rectangle('Position',[1,0,1,9],'LineWidth',1) 
+rectangle('Position',[4,0,1,9],'LineWidth',1)
+rectangle('Position',[7,0,1,9],'LineWidth',1)
+if size(B,2) == 9 
+    [SM,SN] = meshgrid(1:9); 
+    B = [SN(:),SM(:),B(:)]; 
+end
+
+for ii = 1:size(B,1)
+    text(B(ii,2)-0.5,9.5-B(ii,1),num2str(B(ii,3)))
+end
+附录3：对比的解法
+Matlab帮助中的解法.应用DFS，求解。深度优先搜索（DFS）是一种递归回溯的方法。
+B = [1,2,2;
+    1,5,3;
+    1,8,4;
+    2,1,6;
+    2,9,3;
+    3,3,4;
+    3,7,5;
+    4,4,8;
+    4,6,6;
+    5,1,8;
+    5,5,1;
+    5,9,6;
+    6,4,7;
+    6,6,5;
+    7,3,7;
+    7,7,6;
+    8,1,4;
+    8,9,8;
+    9,2,3;
+    9,5,4;
+    9,8,2];
+
+drawSudoku(B) % For the listing of this program, see the end of this example.
+type sudokuEngine
+function [S,eflag] = sudokuEngine(B)
+% This function sets up the rules for Sudoku. It reads in the puzzle
+% expressed in matrix B, calls intlinprog to solve the puzzle, and returns
+% the solution in matrix S.
+%
+% The matrix B should have 3 columns and at least 17 rows (because a Sudoku
+% puzzle needs at least 17 entries to be uniquely solvable). The first two
+% elements in each row are the i,j coordinates of a clue, and the third
+% element is the value of the clue, an integer from 1 to 9. If B is a
+% 9-by-9 matrix, the function first converts it to 3-column form.
+
+%   Copyright 2014 The MathWorks, Inc. 
+
+if isequal(size(B),[9,9]) % 9-by-9 clues
+    % Convert to 81-by-3
+    [SM,SN] = meshgrid(1:9); % make i,j entries
+    B = [SN(:),SM(:),B(:)]; % i,j,k rows
+    % Now delete zero rows
+    [rrem,~] = find(B(:,3) == 0);
+    B(rrem,:) = [];
+end
+
+if size(B,2) ~= 3 || length(size(B)) > 2
+    error('The input matrix must be N-by-3 or 9-by-9')
+end
+
+if sum([any(B ~= round(B)),any(B < 1),any(B > 9)]) % enforces entries 1-9
+    error('Entries must be integers from 1 to 9')
+end
+
+%% The rules of Sudoku:
+N = 9^3; % number of independent variables in x, a 9-by-9-by-9 array
+M = 4*9^2; % number of constraints, see the construction of Aeq
+Aeq = zeros(M,N); % allocate equality constraint matrix Aeq*x = beq
+beq = ones(M,1); % allocate constant vector beq
+f = (1:N)'; % the objective can be anything, but having nonconstant f can speed the solver
+lb = zeros(9,9,9); % an initial zero array
+ub = lb+1; % upper bound array to give binary variables
+
+counter = 1;
+for j = 1:9 % one in each row
+    for k = 1:9
+        Astuff = lb; % clear Astuff
+        Astuff(1:end,j,k) = 1; % one row in Aeq*x = beq
+        Aeq(counter,:) = Astuff(:)'; % put Astuff in a row of Aeq
+        counter = counter + 1;
+    end
+end
+
+for i = 1:9 % one in each column
+    for k = 1:9
+        Astuff = lb;
+        Astuff(i,1:end,k) = 1;
+        Aeq(counter,:) = Astuff(:)';
+        counter = counter + 1;
+    end
+end
+
+for U = 0:3:6 % one in each square
+    for V = 0:3:6
+        for k = 1:9
+            Astuff = lb;
+            Astuff(U+(1:3),V+(1:3),k) = 1;
+            Aeq(counter,:) = Astuff(:)';
+            counter = counter + 1;
+        end
+    end
+end
+
+for i = 1:9 % one in each depth
+    for j = 1:9
+        Astuff = lb;
+        Astuff(i,j,1:end) = 1;
+        Aeq(counter,:) = Astuff(:)';
+        counter = counter + 1;
+    end
+end
+
+%% Put the particular puzzle in the constraints
+% Include the initial clues in the |lb| array by setting corresponding
+% entries to 1. This forces the solution to have |x(i,j,k) = 1|.
+
+for i = 1:size(B,1)
+    lb(B(i,1),B(i,2),B(i,3)) = 1;
+end
+
+%% Solve the Puzzle
+% The Sudoku problem is complete: the rules are represented in the |Aeq|
+% and |beq| matrices, and the clues are ones in the |lb| array. Solve the
+% problem by calling |intlinprog|. Ensure that the integer program has all
+% binary variables by setting the intcon argument to |1:N|, with lower and
+% upper bounds of 0 and 1.
+
+intcon = 1:N;
+
+[x,~,eflag] = intlinprog(f,intcon,[],[],Aeq,beq,lb,ub);
+
+%% Convert the Solution to a Usable Form
+% To go from the solution x to a Sudoku grid, simply add up the numbers at
+% each $(i,j)$ entry, multiplied by the depth at which the numbers appear:
+
+if eflag > 0 % good solution
+    x = reshape(x,9,9,9); % change back to a 9-by-9-by-9 array
+    x = round(x); % clean up non-integer solutions
+    y = ones(size(x));
+    for k = 2:9
+        y(:,:,k) = k; % multiplier for each depth k
+    end
+
+    S = x.*y; % multiply each entry by its depth
+    S = sum(S,3); % S is 9-by-9 and holds the solved puzzle
+else
+    S = [];
+end
+S = sudokuEngine(B); % Solves the puzzle pictured at the start
+
+Intlinprog stopped at the root node because the objective value is within a gap tolerance of the optimal value, options.AbsoluteGapTolerance = 1e-06. The intcon variables are integer within tolerance, options.ConstraintTolerance = 1e-06.
+drawSudoku(S)
+type drawSudoku
